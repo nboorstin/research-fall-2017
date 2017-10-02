@@ -35,14 +35,14 @@ from docopt import docopt
 from copy import deepcopy
 import matplotlib.pyplot as plt
 import ast
+import re
 
 args = docopt(__doc__, help=True)
 
-print(args)
 
-class BlkparseEntry:
-    def __init__(self, inputLine):
+# print(args)
 
+blkparseEntries = {}
 
 class Entry:
     def __init__(self, inputLine, id, lineNum):
@@ -57,7 +57,41 @@ class Entry:
         self.length = data[3]
 
     def __str__(self):
-        return str(self.id)+": "+str(self.time) + ", " + self.operation + ", " + self.block + ", " + self.length + ", " + str(self.line)
+        return str(self.id) + ": " + str(
+            self.time) + ", " + self.operation + ", " + self.block + ", " + self.length + ", " + str(self.line)
+
+
+class BlkparseEntry:
+    def __init__(self, time, operation, block, length):
+        self.time = time
+        self.operation = operation
+        self.block = block
+        self.length = length
+
+    def new(inputLine):
+        try:
+            data = re.sub(' +', ' ', inputLine.replace('+', '')).split(' ')
+            int(data[7])
+            int(data[8])
+            return BlkparseEntry(float(data[3]), data[5], data[7], data[8]), data[6]
+        except Exception:
+            return None, None
+    def get(entry):
+        blk = BlkparseEntry(entry.time, entry.operation, entry.block, entry.length)
+        if blk in blkparseEntries:
+            return blkparseEntries[blk]
+        else:
+            return ''
+
+    def __str__(self):
+        return str(self.time) +", "+ self.operation +", "+ self.block +", "+ self.length
+
+    def __hash__(self):
+        return hash((self.time, self.operation, self.block, self.length))
+
+    def __eq__(self, other):
+        return self.time == other.time and self.operation == other.operation and self.block == other.block and self.length == other.length
+
 
 
 class Request:
@@ -84,7 +118,6 @@ class Request:
             raise Exception('wrong id!')
         self.queueLength = length
 
-
     def getElapsedTime(self):
         return self.endTime - self.startTime
 
@@ -92,7 +125,7 @@ class Request:
         return self.queueLength
 
 
-#validate args:
+# validate args:
 queueSpot = args["--queue-spot"].upper()
 startTime = args["--start-time"].upper()
 endTime = args["--end-time"].upper()
@@ -117,18 +150,21 @@ if writes and (not blkparse):
 
 # read the blkparse file
 if reads or writes:
-
+    with open(blkparse) as inputFile:
+        for inputLine in inputFile.readlines():
+            entry, readwrite = BlkparseEntry.new(inputLine)
+            if entry is not None:
+                blkparseEntries[entry] = readwrite
 
 # read the input file
 entries = []
 
 with open(args['<btt-input-file>']) as inputFile:
-
-    #to be able to actually track a request
+    # to be able to actually track a request
     currentID = 0
     currentLine = 0
 
-    #to copy implicit G and I to other requests
+    # to copy implicit G and I to other requests
     extraIDs = []
     lineGstr = ""
     lineGNum = 0
@@ -136,14 +172,15 @@ with open(args['<btt-input-file>']) as inputFile:
     lineINum = 0
 
     for inputLine in inputFile.readlines():
-        #print(inputLine)
+        # print(inputLine)
         currentLine += 1
         if '-' in inputLine:
             for id in extraIDs:
                 entries.append(Entry(lineGstr, id, lineGNum))
-                entries.append(Entry(lineIstr, id, lineINum))
+                if lineINum != 0:
+                    entries.append(Entry(lineGstr, id, lineINum))
 
-            extraIDs=[]
+            extraIDs = []
             lineGstr = ""
             lineGNum = 0
             lineIstr = ""
@@ -153,12 +190,12 @@ with open(args['<btt-input-file>']) as inputFile:
                 if 'G' in inputLine:
                     lineGstr = inputLine
                     lineGNum = currentLine
-                    #kinda hackish thing to make up for lack of M
+                    # kinda hackish thing to make up for lack of M
                     m = deepcopy(entries[-1])
-                    m.operation='M'
+                    m.operation = 'M'
                     entries.append(m)
                     mp = deepcopy(m)
-                    mp.operation='Mp'
+                    mp.operation = 'Mp'
                     entries.append(mp)
                 elif 'I' in inputLine:
                     lineIstr = inputLine
@@ -176,9 +213,18 @@ inputFile.close()
 #     print(entry)
 
 # sort entries by time
-entries.sort(key=lambda x : x.time)
 
-#read through entries and track
+if reads and writes:
+    entries = [e for e in entries if 'R' in BlkparseEntry.get(e) or 'W' in BlkparseEntry.get(e)]
+elif reads:
+    entries = [e for e in entries if 'R' in BlkparseEntry.get(e)]
+elif writes:
+    entries = [e for e in entries if 'W' in BlkparseEntry.get(e)]
+
+
+entries.sort(key=lambda x: x.time)
+
+# read through entries and track
 mergeReqs = args['--merge-requests']
 unmergeHardware = args['--unmerge-hardware-requests']
 
@@ -194,11 +240,10 @@ lastCTime = 0
 lastCBlock = 0
 lastClength = 0
 
-stimes=[]  #could check if these are actually needed
-htimes=[]
-hlengths=[]
-slengths=[]
-
+stimes = []  # could check if these are actually needed
+htimes = []
+hlengths = []
+slengths = []
 
 for entry in entries:
     if entry.operation == 'Q':
@@ -286,7 +331,7 @@ dispHardware = args['--hardware-queue'] or args['--hardware-queue-x-range'] or a
 
 lengths = [r.queueLength for r in requests if r.queueLength is not None]
 times = [r.getElapsedTime() for r in requests if r.queueLength is not None]
-plt.scatter(lengths, times, [1]*len(lengths))
+plt.scatter(lengths, times, [1] * len(lengths))
 plt.xlabel('Queue length')
 plt.ylabel('Response time')
 if args['--x-range']:
